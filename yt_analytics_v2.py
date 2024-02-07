@@ -4,14 +4,33 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import gspread
+from pymongo import MongoClient
+from datetime import datetime
 
 SCOPES = ['https://www.googleapis.com/auth/yt-analytics.readonly', 'https://www.googleapis.com/auth/spreadsheets']
 
 API_SERVICE_NAME = 'youtubeAnalytics'
 API_VERSION = 'v2'
 CLIENT_SECRETS_FILE = 'CLIENT_SECRET.json'
-SPREADSHEET_ID = '1yCl__w0AcPNC3P_k7VgXpy2MRVzX7vviWBIQ69bhrK0'
+SPREADSHEET_ID = '1TLN8sg-lky6ujeCGWudbiVrM010C8mDYdASHBz7mxGs'
 
+MONGO_CONNECTION_STRING = "mongodb+srv://jayanthkumar597:ekO7numbM1hpO23K@cluster0.0wjrnqw.mongodb.net/"
+
+def transform_data(data, column_headers):
+    transformed_data = []
+    for row in data:
+        row_dict = dict(zip(column_headers, row))
+        transformed_data.append(row_dict)
+    return transformed_data
+
+# Function to insert data into MongoDB
+def insert_data_into_mongodb(db_name, collection_name, data, column_headers):
+    transformed_data = transform_data(data, column_headers)
+    client = MongoClient(MONGO_CONNECTION_STRING)
+    db_name = db_name.replace('/', '_')
+    db = client[db_name]
+    collection = db[collection_name]
+    collection.insert_many(transformed_data)
 
 def get_service():
     flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
@@ -47,6 +66,10 @@ def write_data_to_spreadsheet(data, sheet_name, column_headers):
         # Insert the data into the worksheet
         worksheet.insert_rows(data_list, 3)
 
+    db_name = f"youtube_analytics_2023_for_MF"
+
+    insert_data_into_mongodb(db_name, sheet_name, data, column_headers)
+
 def get_video_titles(youtube, video_ids):
     video_info = youtube.videos().list(
         part='snippet',
@@ -75,19 +98,19 @@ def fetch_and_write_basic_stats(youtubeAnalytics,start_date,end_date):
     write_data_to_spreadsheet(response.get('rows', []), 'Basic Stats', column_headers)
 
 
-def fetch_and_write_top_videos(youtubeAnalytics,start_date,end_date):
+def fetch_and_write_top_videos(youtubeAnalytics, start_date, end_date):
     response = execute_api_request(
         youtubeAnalytics.reports().query,
         ids='channel==MINE',
         startDate=start_date,
         endDate=end_date,
-        metrics='views,likes,comments,shares',
+        metrics='views,likes,comments,shares,estimatedMinutesWatched,averageViewDuration,averageViewPercentage',
         dimensions='video',
         sort='-views',
         maxResults=10
     )
     video_ids = [row[0] for row in response.get('rows', [])]
-    column_headers = ['video', 'views', 'likes', 'comments', 'shares']
+    column_headers = ['video', 'video_id', 'views', 'likes', 'comments', 'shares', 'estimatedMinutesWatched', 'averageViewDuration', 'averageViewPercentage']
 
     # Fetch video titles using YouTube Data API
     youtube = build('youtube', 'v3', developerKey='AIzaSyD0gbH6qSaSGJNhU4TsQH-Xs8genUcuGEc')
@@ -100,11 +123,16 @@ def fetch_and_write_top_videos(youtubeAnalytics,start_date,end_date):
         likes = row[2]
         comments = row[3]
         shares = row[4]
+        estimated_minutes_watched = row[5]
+        average_view_duration = row[6]
+        average_view_percentage = row[7]
+
         title = video_titles.get(video_id, 'Title Not Found')
 
-        data.append([title, views, likes, comments, shares])
+        data.append([title, video_id, views, likes, comments, shares, estimated_minutes_watched, average_view_duration, average_view_percentage])
 
     write_data_to_spreadsheet(data, 'Top Videos', column_headers)
+
 
 
 def fetch_and_write_audience_retention(youtubeAnalytics,start_date,end_date):
@@ -129,7 +157,7 @@ def fetch_and_write_time_based_data(youtubeAnalytics,start_date,end_date):
         metrics='views,averageViewDuration,estimatedMinutesWatched,averageViewPercentage,subscribersGained',
         dimensions='day', 
         sort='day',
-        maxResults=100
+        maxResults=1000
     )
     column_headers = ['day', 'views', 'averageViewDuration', 'estimatedMinutesWatched', 'averageViewPercentage', 'subscribersGained']
     write_data_to_spreadsheet(response.get('rows', []), 'Time-based Data',column_headers)
@@ -242,6 +270,6 @@ if __name__ == '__main__':
     fetch_and_write_user_geography(youtubeAnalytics, args.start_date, args.end_date)
     fetch_and_write_traffic_source(youtubeAnalytics, args.start_date, args.end_date)
     fetch_and_write_device_and_os(youtubeAnalytics, args.start_date, args.end_date)
-    fetch_and_write_viewer_demographics(youtubeAnalytics, args.start_date, args.end_date)
+    #fetch_and_write_viewer_demographics(youtubeAnalytics, args.start_date, args.end_date)
     playbacklocation(youtubeAnalytics, args.start_date, args.end_date)
     socialshares(youtubeAnalytics, args.start_date, args.end_date)
